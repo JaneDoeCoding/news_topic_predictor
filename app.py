@@ -1,15 +1,8 @@
-import os
-from flask import Flask, request, jsonify, render_template
 import numpy as np
 import torch
 from transformers import BertTokenizer, BertModel
 from sklearn.metrics.pairwise import cosine_similarity
-
-app = Flask(
-    __name__,
-    template_folder=os.path.join('..', 'frontend', 'templates'),
-    static_folder=os.path.join('..', 'frontend', 'static')
-)
+import gradio as gr
 
 # 加载BERT模型和tokenizer
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
@@ -28,42 +21,28 @@ def get_user_embedding(text):
         outputs = model(**inputs)
     return outputs.last_hidden_state[:, 0, :].squeeze().numpy()
 
-def find_most_similar_news(user_input):
+def predict_topic(user_input):
     user_vec = get_user_embedding(user_input).reshape(1, -1)
     sims = cosine_similarity(user_vec, embeddings)
     idx = np.argmax(sims)
-    return {
-        'category': categories[idx].capitalize(),
-        'text': texts[idx],
-        'similarity_score': float(sims[0][idx])
-    }
+    
+    category = categories[idx].capitalize()
+    snippet = texts[idx][:200] + '...' if len(texts[idx]) > 200 else texts[idx]
+    score = float(sims[0][idx])
+    
+    return category, snippet, round(score, 3)
 
-@app.route('/predict', methods=['POST'])
-def predict():
-    """
-    接收用户新闻标题文本，返回最相似新闻的主题分类，新闻文本摘要，以及相似度分数
-    """
-    data = request.get_json()
-    user_text = data.get('text')
-    if not user_text:
-        return jsonify({'error': 'No input text provided'}), 400
+# 创建 Gradio 接口
+demo = gr.Interface(
+    fn=predict_topic,
+    inputs=gr.Textbox(lines=2, placeholder="Enter a news headline"),
+    outputs=[
+        gr.Label(label="Predicted Topic Category"),
+        gr.Textbox(label="Most Similar News Article Snippet"),
+        gr.Label(label="Similarity Score")
+    ],
+    title="News Topic Predictor",
+    description="Paste a news headline to see its topic and the most similar news article from our database."
+)
 
-    result = find_most_similar_news(user_text)
-
-    max_len = 200
-    text_snippet = result['text'][:max_len] + ('...' if len(result['text']) > max_len else '')
-
-    response = {
-        'category': result['category'].title(),
-        'text': text_snippet,
-        'similarity_score': round(result['similarity_score'], 3)
-    }
-    return jsonify(response)
-
-@app.route('/')
-def home():
-    return render_template('index.html')
-
-
-if __name__ == '__main__':
-    app.run(debug=True)
+demo.launch()
